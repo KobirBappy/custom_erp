@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "staging": "custom-erp-pos"
+  },
+  "targets": {},
+  "etags": {}
+}

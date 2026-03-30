@@ -1,0 +1,43 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "custom-erp-pos",
+          "appId": "1:483746948230:android:405fee62f8b0558fe01d07",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "custom-erp-pos",
+          "configurations": {
+            "android": "1:483746948230:android:405fee62f8b0558fe01d07",
+            "ios": "1:483746948230:ios:7cbda9faf92bb664e01d07",
+            "macos": "1:483746948230:ios:7cbda9faf92bb664e01d07",
+            "web": "1:483746948230:web:779baf6e0312e9c2e01d07",
+            "windows": "1:483746948230:web:e4f770c68cb97851e01d07"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}

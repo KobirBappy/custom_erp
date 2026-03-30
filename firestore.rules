@@ -1,0 +1,372 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function myUid() {
+      return request.auth.uid;
+    }
+
+    function isSuperAdmin() {
+      return signedIn()
+        && (
+          (
+            request.auth.token.email is string
+            && request.auth.token.email.lower() in [
+              'kobir.hosanpro@gmail.com'
+            ]
+          )
+          || (
+            exists(/databases/$(database)/documents/appUsers/$(myUid()))
+            && (
+              get(/databases/$(database)/documents/appUsers/$(myUid())).data.role == 'super_admin'
+              || (
+                get(/databases/$(database)/documents/appUsers/$(myUid())).data.email is string
+                && get(/databases/$(database)/documents/appUsers/$(myUid())).data.email.lower() in [
+                  'kobir.hosanpro@gmail.com'
+                ]
+              )
+            )
+          )
+        );
+    }
+
+    function tokenHasBusiness(businessId) {
+      return signedIn()
+        && request.auth.token.businessIds is list
+        && businessId in request.auth.token.businessIds;
+    }
+
+    function userDoc(businessId) {
+      return get(/databases/$(database)/documents/businesses/$(businessId)/users/$(myUid()));
+    }
+
+    function userDocExists(businessId) {
+      return exists(/databases/$(database)/documents/businesses/$(businessId)/users/$(myUid()));
+    }
+
+    function isBusinessOwner(businessId) {
+      return exists(/databases/$(database)/documents/businesses/$(businessId))
+        && get(/databases/$(database)/documents/businesses/$(businessId)).data.ownerId == myUid();
+    }
+
+    function isActiveUser(businessId) {
+      return userDocExists(businessId)
+        && (
+          !(userDoc(businessId).data.keys().hasAny(['isActive']))
+          || userDoc(businessId).data.isActive == true
+        );
+    }
+
+    function hasBusinessAccess(businessId) {
+      return signedIn()
+        && (
+          isSuperAdmin()
+          || tokenHasBusiness(businessId)
+          || isBusinessOwner(businessId)
+          || isActiveUser(businessId)
+        );
+    }
+
+    function roleFromToken(businessId) {
+      return signedIn()
+        && request.auth.token.roles is map
+        && request.auth.token.roles[businessId] is string
+        ? request.auth.token.roles[businessId]
+        : null;
+    }
+
+    function roleFromUserDoc(businessId) {
+      return userDocExists(businessId) && userDoc(businessId).data.role is string
+        ? userDoc(businessId).data.role
+        : null;
+    }
+
+    function hasAnyRole(businessId, roles) {
+      return isSuperAdmin() || (
+        hasBusinessAccess(businessId)
+        && (
+          (roleFromToken(businessId) is string && roleFromToken(businessId) in roles)
+          || (roleFromUserDoc(businessId) is string && roleFromUserDoc(businessId) in roles)
+        )
+      );
+    }
+
+    function canManageBusiness(businessId) {
+      return hasAnyRole(businessId, ['owner', 'admin']);
+    }
+
+    function canManageUsers(businessId) {
+      return hasAnyRole(businessId, ['owner', 'admin']);
+    }
+
+    function canManageCatalog(businessId) {
+      return hasAnyRole(businessId, ['owner', 'admin', 'manager']);
+    }
+
+    function canSell(businessId) {
+      return hasAnyRole(businessId, ['owner', 'admin', 'manager', 'cashier']);
+    }
+
+    function canManagePurchases(businessId) {
+      return hasAnyRole(businessId, ['owner', 'admin', 'manager']);
+    }
+
+    function canManageExpenses(businessId) {
+      return hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant', 'cashier']);
+    }
+
+    function canManageStock(businessId) {
+      return hasAnyRole(businessId, ['owner', 'admin', 'manager']);
+    }
+
+    function canViewReports(businessId) {
+      return hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant']);
+    }
+
+    function validBusinessCreate(businessId) {
+      return request.resource.data.businessId == businessId;
+    }
+
+    function validBusinessUpdate(businessId) {
+      return resource.data.businessId == businessId
+        && request.resource.data.businessId == resource.data.businessId;
+    }
+
+    function isBusinessOwnerDoc(businessId) {
+      return existsAfter(/databases/$(database)/documents/businesses/$(businessId))
+        && getAfter(/databases/$(database)/documents/businesses/$(businessId)).data.ownerId == myUid();
+    }
+
+    function protectedBusinessFields() {
+      return [
+        'onboardingStatus',
+        'onboardingRequestedAt',
+        'onboardingReviewedBy',
+        'onboardingReviewedAt',
+        'onboardingReviewNote',
+        'licenseActive',
+        'licensePlanId',
+        'licensePlanName',
+        'licensePaymentStatus',
+        'licensePaymentMethod',
+        'licenseTransactionRef',
+        'licenseAmount',
+        'licenseCurrency',
+        'licenseActivatedAt',
+        'licenseExpiresAt',
+        'licenseUpdatedBy',
+        'latestPaymentRequestId'
+      ];
+    }
+
+    function noProtectedBusinessFieldChanges() {
+      return !request.resource.data.diff(resource.data).changedKeys().hasAny(protectedBusinessFields());
+    }
+
+    match /appUsers/{uid} {
+      allow read, write: if signedIn() && (uid == myUid() || isSuperAdmin());
+    }
+
+    // ── Collection-group rules ────────────────────────────────────────────
+    // Firestore requires a top-level /{path=**}/collectionName rule for any
+    // collectionGroup() query to be permitted, regardless of path-specific rules.
+
+    // Super admin can read ALL payment requests across all businesses for the
+    // collectionGroup('paymentRequests') query in the admin panel.
+    match /{path=**}/paymentRequests/{requestId} {
+      allow read: if isSuperAdmin();
+      allow write: if isSuperAdmin();
+    }
+
+    match /system_meta/{docId} {
+      allow read: if signedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    match /subscriptionPlans/{planId} {
+      allow read: if signedIn();
+      allow write: if isSuperAdmin();
+    }
+
+    match /businesses/{businessId} {
+      allow read: if hasBusinessAccess(businessId);
+      allow create: if signedIn()
+        && request.resource.data.ownerId == myUid()
+        && request.resource.data.onboardingStatus == 'pending_approval';
+      allow update: if isSuperAdmin()
+        || (canManageBusiness(businessId) && noProtectedBusinessFieldChanges());
+      allow delete: if isSuperAdmin();
+
+      match /paymentRequests/{requestId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if hasBusinessAccess(businessId)
+          && request.resource.data.businessId == businessId
+          && request.resource.data.requestedBy == myUid()
+          && request.resource.data.status == 'pending';
+        allow update: if isSuperAdmin()
+          || (
+            // Business owner may only cancel their own pending request.
+            hasBusinessAccess(businessId)
+            && resource.data.requestedBy == myUid()
+            && resource.data.status == 'pending'
+            && request.resource.data.status == 'cancelled'
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status', 'updatedAt'])
+          );
+        allow delete: if isSuperAdmin();
+      }
+
+      match /locations/{locationId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canManageBusiness(businessId) || isBusinessOwnerDoc(businessId);
+        allow update, delete: if canManageBusiness(businessId);
+      }
+
+      match /users/{userId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canManageUsers(businessId)
+          || (signedIn() && userId == myUid() && isBusinessOwnerDoc(businessId));
+        allow update, delete: if canManageUsers(businessId);
+      }
+
+      match /categories/{categoryId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canManageCatalog(businessId) && validBusinessCreate(businessId);
+        allow update: if canManageCatalog(businessId) && validBusinessUpdate(businessId);
+        allow delete: if canManageCatalog(businessId);
+      }
+
+      match /brands/{brandId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canManageCatalog(businessId) && validBusinessCreate(businessId);
+        allow update: if canManageCatalog(businessId) && validBusinessUpdate(businessId);
+        allow delete: if canManageCatalog(businessId);
+      }
+
+      match /units/{unitId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canManageCatalog(businessId) && validBusinessCreate(businessId);
+        allow update: if canManageCatalog(businessId) && validBusinessUpdate(businessId);
+        allow delete: if canManageCatalog(businessId);
+      }
+
+      match /products/{productId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canManageCatalog(businessId) && validBusinessCreate(businessId);
+        allow update: if canManageCatalog(businessId) && validBusinessUpdate(businessId);
+        allow delete: if canManageCatalog(businessId);
+      }
+
+      match /contacts/{contactId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canSell(businessId) && validBusinessCreate(businessId);
+        allow update: if canSell(businessId) && validBusinessUpdate(businessId);
+        allow delete: if hasAnyRole(businessId, ['owner', 'admin', 'manager']);
+      }
+
+      match /transactions/{txId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canSell(businessId)
+          && validBusinessCreate(businessId)
+          && request.resource.data.keys().hasAll([
+            'businessId', 'locationId', 'cashierUserId', 'type', 'grandTotal', 'paymentStatus'
+          ])
+          && request.resource.data.type in ['sale', 'sale_return']
+          && request.resource.data.grandTotal is number;
+        allow update: if hasAnyRole(businessId, ['owner', 'admin', 'manager'])
+          && validBusinessUpdate(businessId);
+        allow delete: if hasAnyRole(businessId, ['owner', 'admin']);
+      }
+
+      match /sales/{saleId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canSell(businessId) && validBusinessCreate(businessId);
+        allow update: if hasAnyRole(businessId, ['owner', 'admin', 'manager'])
+          && validBusinessUpdate(businessId);
+        allow delete: if hasAnyRole(businessId, ['owner', 'admin']);
+      }
+
+      match /saleReturns/{returnId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant'])
+          && validBusinessCreate(businessId);
+        allow update: if hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant'])
+          && request.resource.data.businessId == businessId
+          && (
+            resource.data.businessId == businessId
+            || !resource.data.keys().hasAny(['businessId'])
+          );
+        allow delete: if hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant']);
+      }
+
+      match /purchases/{purchaseId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canManagePurchases(businessId) && validBusinessCreate(businessId);
+        allow update: if canManagePurchases(businessId) && validBusinessUpdate(businessId);
+        allow delete: if hasAnyRole(businessId, ['owner', 'admin']);
+      }
+
+      match /purchaseReturns/{returnId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant'])
+          && validBusinessCreate(businessId);
+        allow update: if hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant'])
+          && request.resource.data.businessId == businessId
+          && (
+            resource.data.businessId == businessId
+            || !resource.data.keys().hasAny(['businessId'])
+          );
+        allow delete: if hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant']);
+      }
+
+      match /expenseCategories/{categoryId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create, update, delete: if hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant']);
+      }
+
+      match /expenses/{expenseId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create: if canManageExpenses(businessId)
+          && validBusinessCreate(businessId)
+          && request.resource.data.amount is number
+          && request.resource.data.amount >= 0;
+        allow update: if canManageExpenses(businessId)
+          && validBusinessUpdate(businessId)
+          && request.resource.data.amount is number
+          && request.resource.data.amount >= 0;
+        allow delete: if hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant']);
+      }
+
+      match /stockTransfers/{transferId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create, update, delete: if canManageStock(businessId);
+      }
+
+      match /stockAdjustments/{adjustmentId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create, update, delete: if canManageStock(businessId);
+      }
+
+      match /reports/{reportId} {
+        allow read: if canViewReports(businessId);
+        allow create, update, delete: if hasAnyRole(businessId, ['owner', 'admin', 'manager', 'accountant']);
+      }
+
+      match /notifications/{notificationId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create, update, delete: if hasAnyRole(businessId, ['owner', 'admin', 'manager']);
+      }
+
+      match /settings/{settingId} {
+        allow read: if hasBusinessAccess(businessId);
+        allow create, update, delete: if canManageBusiness(businessId);
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
