@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
+  workflow_dispatch: # Allows you to run this manually from the Actions tab
 
 concurrency:
   group: firebase-hosting-${{ github.ref }}
@@ -15,25 +15,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
-          cache: true
+          channel: 'stable'
+          cache: true # Speeds up subsequent runs by caching the Flutter SDK
 
       - name: Flutter Pub Get
         run: flutter pub get
 
       - name: Build Web
+        # Added --base-href if needed; usually "/" for Firebase root
         run: flutter build web --release
 
       - name: Deploy to Firebase Hosting (Live)
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
+          # Ensure this secret is named exactly this in your GitHub Repo Settings
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_CUSTOM_ERP_POS }}
           channelId: live
           projectId: custom-erp-pos
