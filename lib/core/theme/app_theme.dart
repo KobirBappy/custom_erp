@@ -26,14 +26,14 @@ class AppTheme {
         ),
         iconTheme: IconThemeData(color: Colors.white),
       ),
-      cardTheme: CardTheme(
-        elevation: 0,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-          side: const BorderSide(color: AppColors.cardBorder),
-        ),
-        color: AppColors.surface,
-      ),
+      cardTheme: ThemeData(useMaterial3: true).cardTheme.copyWith(
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: AppColors.cardBorder),
+            ),
+            color: AppColors.surface,
+          ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
