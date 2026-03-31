@@ -89,10 +89,11 @@ class ContactsNotifier extends StateNotifier<List<Contact>> {
     });
   }
 
-  Future<void> add(Contact contact) async {
+  Future<String> add(Contact contact) async {
     if (AppConstants.demoMode) {
+      final newId = _uuid.v4();
       final newContact = Contact(
-        id: _uuid.v4(),
+        id: newId,
         businessId: contact.businessId,
         name: contact.name,
         type: contact.type,
@@ -106,24 +107,29 @@ class ContactsNotifier extends StateNotifier<List<Contact>> {
         createdAt: DateTime.now(),
       );
       state = [...state, newContact];
-      return;
+      return newId;
     }
 
     final businessId =
         ref.read(currentBusinessIdProvider) ?? contact.businessId;
-    if (businessId.isEmpty) return;
+    if (businessId.isEmpty) return '';
+
+    final docId =
+        contact.id.trim().isNotEmpty ? contact.id.trim() : _uuid.v4();
 
     await FirebaseFirestore.instance
         .collection('businesses')
         .doc(businessId)
         .collection('contacts')
-        .doc(_uuid.v4())
+        .doc(docId)
         .set({
       ...contact.toMap(),
       'businessId': businessId,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
+
+    return docId;
   }
 
   Future<void> update(Contact updated) async {

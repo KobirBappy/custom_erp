@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/router/app_routes.dart';
 import '../../auth/providers/auth_provider.dart';
 import '../../businesses/providers/business_provider.dart';
 import '../../contacts/models/contact.dart';
@@ -109,9 +110,6 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         ),
       );
       widget.onSaleCompleted?.call();
-      if (!widget.embedded) {
-        context.go('/sell');
-      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -171,7 +169,7 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         title: const Text('Point of Sale'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () => context.go('/sell'),
+          onPressed: () => context.go(AppRoutes.sell),
         ),
         actions: [
           if (cart.totalQty > 0)
@@ -544,6 +542,20 @@ class _PosScreenState extends ConsumerState<PosScreen> {
             },
             child: const Text('Walk-In Customer'),
           ),
+          SimpleDialogOption(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _createCustomerFromPos();
+            },
+            child: const Row(
+              children: [
+                Icon(Icons.person_add_alt_1_outlined, size: 18),
+                SizedBox(width: 8),
+                Text('Create New Customer'),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
           ...customers.map(
             (c) => SimpleDialogOption(
               onPressed: () {
@@ -578,6 +590,113 @@ class _PosScreenState extends ConsumerState<PosScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _createCustomerFromPos() async {
+    final nameCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController();
+    final emailCtrl = TextEditingController();
+    final addressCtrl = TextEditingController();
+
+    final payload = await showDialog<Map<String, String>>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Create Customer'),
+        content: SizedBox(
+          width: 360,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: 'Customer Name *'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: phoneCtrl,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'Phone'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: 'Email'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: addressCtrl,
+                decoration: const InputDecoration(labelText: 'Address'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, <String, String>{
+              'name': nameCtrl.text.trim(),
+              'phone': phoneCtrl.text.trim(),
+              'email': emailCtrl.text.trim(),
+              'address': addressCtrl.text.trim(),
+            }),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+
+    nameCtrl.dispose();
+    phoneCtrl.dispose();
+    emailCtrl.dispose();
+    addressCtrl.dispose();
+
+    if (payload == null || !mounted) return;
+
+    final name = (payload['name'] ?? '').trim();
+    final phone = (payload['phone'] ?? '').trim();
+    final email = (payload['email'] ?? '').trim();
+    final address = (payload['address'] ?? '').trim();
+
+    if (name.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Customer name is required.')),
+      );
+      return;
+    }
+
+    try {
+      final business = ref.read(currentBusinessProvider);
+      final createdId = await ref.read(contactsProvider.notifier).add(
+            Contact(
+              id: '',
+              businessId: business?.id ?? AppConstants.demoBusinessId,
+              name: name,
+              type: ContactType.customer,
+              phone: phone,
+              email: email,
+              address: address,
+            ),
+          );
+
+      ref.read(cartProvider.notifier).setCustomer(
+            id: createdId,
+            name: name,
+          );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Customer created and selected.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to create customer: $e')),
+      );
+    }
   }
 
   Future<void> _editManualTransport(double current, String symbol) async {

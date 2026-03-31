@@ -118,6 +118,8 @@ class PaymentRequestItem {
     required this.requestedBy,
     required this.requestedByName,
     this.requestedAt,
+    this.createdAt,
+    this.updatedAt,
     this.reviewedBy,
     this.reviewedByName,
     this.reviewedAt,
@@ -140,6 +142,8 @@ class PaymentRequestItem {
   final String requestedBy;
   final String requestedByName;
   final DateTime? requestedAt;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
   final String? reviewedBy;
   final String? reviewedByName;
   final DateTime? reviewedAt;
@@ -174,6 +178,8 @@ class PaymentRequestItem {
       requestedBy: map['requestedBy'] as String? ?? '',
       requestedByName: map['requestedByName'] as String? ?? '',
       requestedAt: parseDate(map['requestedAt']),
+      createdAt: parseDate(map['createdAt']),
+      updatedAt: parseDate(map['updatedAt']),
       reviewedBy: map['reviewedBy'] as String?,
       reviewedByName: map['reviewedByName'] as String?,
       reviewedAt: parseDate(map['reviewedAt']),
@@ -221,44 +227,46 @@ const availablePlans = <SubscriptionPlan>[
   ),
 ];
 
+/// Active plans only — used by business owners to browse and request.
 final subscriptionPlansProvider = StreamProvider<List<SubscriptionPlan>>((ref) {
   if (AppConstants.demoMode) {
     return Stream<List<SubscriptionPlan>>.value(availablePlans);
   }
 
-  final authUser = FirebaseAuth.instance.currentUser;
+  final authUser = ref.watch(authProvider);
   if (authUser == null) {
-    return Stream<List<SubscriptionPlan>>.value(availablePlans);
+    return Stream<List<SubscriptionPlan>>.value(const <SubscriptionPlan>[]);
   }
 
-  final controller = StreamController<List<SubscriptionPlan>>();
-  final sub = FirebaseFirestore.instance
+  return FirebaseFirestore.instance
       .collection('subscriptionPlans')
       .orderBy('sortOrder')
       .snapshots()
-      .listen(
-    (snap) {
-      final plans = snap.docs
+      .map((snap) => snap.docs
           .map((doc) => SubscriptionPlan.fromMap(doc.id, doc.data()))
           .where((p) => p.isActive)
-          .toList();
-      controller.add(plans.isEmpty ? availablePlans : plans);
-    },
-    onError: (error, stackTrace) {
-      if (error is FirebaseException && error.code == 'permission-denied') {
-        controller.add(availablePlans);
-        return;
-      }
-      controller.addError(error, stackTrace);
-    },
-  );
+          .toList());
+});
 
-  ref.onDispose(() async {
-    await sub.cancel();
-    await controller.close();
-  });
+/// All plans including inactive — used by super admin to manage packages.
+final allSubscriptionPlansProvider =
+    StreamProvider<List<SubscriptionPlan>>((ref) {
+  if (AppConstants.demoMode) {
+    return Stream<List<SubscriptionPlan>>.value(availablePlans);
+  }
 
-  return controller.stream;
+  final authUser = ref.watch(authProvider);
+  if (authUser == null) {
+    return Stream<List<SubscriptionPlan>>.value(const <SubscriptionPlan>[]);
+  }
+
+  return FirebaseFirestore.instance
+      .collection('subscriptionPlans')
+      .orderBy('sortOrder')
+      .snapshots()
+      .map((snap) => snap.docs
+          .map((doc) => SubscriptionPlan.fromMap(doc.id, doc.data()))
+          .toList());
 });
 
 final onboardingStatusProvider = StreamProvider<String>((ref) {
@@ -266,14 +274,17 @@ final onboardingStatusProvider = StreamProvider<String>((ref) {
     return Stream<String>.value('approved');
   }
 
-  final business = ref.watch(currentBusinessProvider);
-  if (business == null) {
+  // Use .select so this stream only recreates when the business ID changes,
+  // not on every business document field update (e.g. license fields).
+  final businessId =
+      ref.watch(currentBusinessProvider.select((b) => b?.id));
+  if (businessId == null || businessId.isEmpty) {
     return Stream<String>.value('no_business');
   }
 
   return FirebaseFirestore.instance
       .collection('businesses')
-      .doc(business.id)
+      .doc(businessId)
       .snapshots()
       .map((doc) =>
           doc.data()?['onboardingStatus'] as String? ?? 'pending_approval');
@@ -288,14 +299,17 @@ final businessLicenseProvider = StreamProvider<BusinessLicense>((ref) {
     ));
   }
 
-  final business = ref.watch(currentBusinessProvider);
-  if (business == null) {
+  // Use .select so this stream only recreates when the business ID changes,
+  // not on every business document field update (e.g. license fields).
+  final businessId =
+      ref.watch(currentBusinessProvider.select((b) => b?.id));
+  if (businessId == null || businessId.isEmpty) {
     return Stream<BusinessLicense>.value(const BusinessLicense());
   }
 
   return FirebaseFirestore.instance
       .collection('businesses')
-      .doc(business.id)
+      .doc(businessId)
       .snapshots()
       .map((doc) {
     final map = doc.data() ?? const <String, dynamic>{};
@@ -308,34 +322,58 @@ final paymentRequestsProvider = StreamProvider<List<PaymentRequestItem>>((ref) {
     return Stream<List<PaymentRequestItem>>.value(const <PaymentRequestItem>[]);
   }
 
-  final business = ref.watch(currentBusinessProvider);
-  if (business == null) {
+  // Use .select so this stream only recreates when the business ID changes.
+  // Without this, every approval (which updates the business document's license
+  // fields) would trigger a stream recreation, causing the Firestore cache to
+  // briefly re-emit the old 'pending' status before the server update arrives.
+  final businessId =
+      ref.watch(currentBusinessProvider.select((b) => b?.id));
+  if (businessId == null || businessId.isEmpty) {
     return Stream<List<PaymentRequestItem>>.value(const <PaymentRequestItem>[]);
   }
 
   return FirebaseFirestore.instance
       .collection('businesses')
-      .doc(business.id)
+      .doc(businessId)
       .collection('paymentRequests')
       .orderBy('requestedAt', descending: true)
       .snapshots()
       .map(
-        (snap) => snap.docs
-            .map((doc) => PaymentRequestItem.fromMap(doc.id, doc.data()))
-            .toList(),
+        (snap) {
+          final items = snap.docs
+              .map((doc) => PaymentRequestItem.fromMap(doc.id, doc.data()))
+              .toList();
+
+          // Keep newest requests first even when server timestamps are missing
+          // or delayed, so UI reflects the most recent request status.
+          items.sort((a, b) {
+            final aTime = a.requestedAt ??
+                a.updatedAt ??
+                a.createdAt ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            final bTime = b.requestedAt ??
+                b.updatedAt ??
+                b.createdAt ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            return bTime.compareTo(aTime);
+          });
+
+          return items;
+        },
       );
+});
+
+final latestPaymentRequestProvider = Provider<PaymentRequestItem?>((ref) {
+  final requests = ref.watch(paymentRequestsProvider).valueOrNull;
+  if (requests == null || requests.isEmpty) return null;
+  return requests.first;
 });
 
 final latestPendingPaymentRequestProvider =
     Provider<PaymentRequestItem?>((ref) {
-  final requests = ref.watch(paymentRequestsProvider).valueOrNull;
-  if (requests == null || requests.isEmpty) return null;
-
-  for (final req in requests) {
-    if (req.isPending) return req;
-  }
-
-  return null;
+  final latest = ref.watch(latestPaymentRequestProvider);
+  if (latest == null) return null;
+  return latest.isPending ? latest : null;
 });
 
 final sellPosEnabledProvider = Provider<bool>((ref) {
@@ -395,13 +433,31 @@ class SubscriptionService {
       sortOrder: sortOrder,
     );
 
+    final docRef = FirebaseFirestore.instance
+        .collection('subscriptionPlans')
+        .doc(docId);
+
+    final data = plan.toMap();
+    // Only set createdAt when creating a new plan, not on updates.
+    if (id == null || id.trim().isEmpty) {
+      data['createdAt'] = FieldValue.serverTimestamp();
+    }
+    await docRef.set(data, SetOptions(merge: true));
+  }
+
+  Future<void> togglePlanActive(SubscriptionPlan plan) async {
+    final isSuperAdminUser = ref.read(isSuperAdminProvider);
+    if (!isSuperAdminUser) {
+      throw Exception('Only super admin can manage packages.');
+    }
+
     await FirebaseFirestore.instance
         .collection('subscriptionPlans')
-        .doc(docId)
-        .set({
-      ...plan.toMap(),
-      'createdAt': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+        .doc(plan.id)
+        .update({
+      'isActive': !plan.isActive,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
   }
 
   Future<void> deleteSubscriptionPlan(String id) async {

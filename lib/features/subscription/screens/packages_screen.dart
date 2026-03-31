@@ -26,9 +26,11 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
     final requestsAsync = ref.watch(paymentRequestsProvider);
     final plansAsync = ref.watch(subscriptionPlansProvider);
     final pendingRequest = ref.watch(latestPendingPaymentRequestProvider);
+    final license = licenseAsync.valueOrNull;
 
     if (isSuperAdmin) {
-      return _buildSuperAdminPackageManager(plansAsync);
+      final allPlansAsync = ref.watch(allSubscriptionPlansProvider);
+      return _buildSuperAdminPackageManager(allPlansAsync);
     }
 
     return SingleChildScrollView(
@@ -129,11 +131,14 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
                                           : () => _submitPaymentRequest(plan),
                                       icon: const Icon(Icons.send_outlined,
                                           size: 16),
-                                      label: Text(_processing
-                                          ? 'Submitting...'
-                                          : pendingRequest != null
-                                              ? 'Pending Approval'
-                                              : 'Request Activation'),
+                                      label: Text(
+                                        _processing
+                                            ? 'Submitting...'
+                                            : pendingRequest != null
+                                                ? 'Pending Approval'
+                                                : _planButtonLabel(
+                                                    plan, license),
+                                      ),
                                     ),
                                   ),
                                 ],
@@ -225,10 +230,36 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
                                     Expanded(
                                       child: Text(
                                         plan.name,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w700),
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          color: plan.isActive
+                                              ? null
+                                              : AppColors.textSecondary,
+                                        ),
                                       ),
                                     ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: plan.isActive
+                                            ? AppColors.success
+                                                .withOpacity(0.12)
+                                            : AppColors.error.withOpacity(0.1),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        plan.isActive ? 'Active' : 'Inactive',
+                                        style: TextStyle(
+                                          color: plan.isActive
+                                              ? AppColors.success
+                                              : AppColors.error,
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
                                     Text(
                                       '${AppConstants.defaultCurrencySymbol}${plan.price.toStringAsFixed(0)}',
                                       style: const TextStyle(
@@ -240,22 +271,18 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  'Duration: ${plan.durationDays} days',
+                                  'Duration: ${plan.durationDays} days  •  Sort: ${plan.sortOrder}',
                                   style: const TextStyle(
                                     color: AppColors.textSecondary,
-                                  ),
-                                ),
-                                Text(
-                                  'Sort order: ${plan.sortOrder}',
-                                  style: const TextStyle(
-                                    color: AppColors.textSecondary,
+                                    fontSize: 12,
                                   ),
                                 ),
                                 const SizedBox(height: 6),
                                 ...plan.features.map((f) => Text(
                                       '- $f',
                                       style: const TextStyle(
-                                          color: AppColors.textSecondary),
+                                          color: AppColors.textSecondary,
+                                          fontSize: 13),
                                     )),
                                 const SizedBox(height: 10),
                                 Wrap(
@@ -274,13 +301,27 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
                                     OutlinedButton.icon(
                                       onPressed: _processing
                                           ? null
+                                          : () => _togglePlanActive(plan),
+                                      icon: Icon(
+                                        plan.isActive
+                                            ? Icons.visibility_off_outlined
+                                            : Icons.visibility_outlined,
+                                        size: 16,
+                                      ),
+                                      label: Text(plan.isActive
+                                          ? 'Deactivate'
+                                          : 'Activate'),
+                                    ),
+                                    OutlinedButton.icon(
+                                      onPressed: _processing
+                                          ? null
                                           : () => _removePlan(plan),
                                       icon: const Icon(Icons.delete_outline,
                                           size: 16),
                                       style: OutlinedButton.styleFrom(
                                         foregroundColor: AppColors.error,
                                       ),
-                                      label: const Text('Remove'),
+                                      label: const Text('Delete'),
                                     ),
                                   ],
                                 ),
@@ -309,6 +350,13 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
         ],
       ),
     );
+  }
+
+  String _planButtonLabel(SubscriptionPlan plan, BusinessLicense? license) {
+    if (license == null || !license.isActive) return 'Request Activation';
+    if (license.isExpired) return 'Renew';
+    if (license.planId == plan.id) return 'Renew';
+    return 'Upgrade / Switch';
   }
 
   Widget _onboardingCard(String status) {
@@ -787,6 +835,51 @@ class _PackagesScreenState extends ConsumerState<PackagesScreen> {
       durationCtrl.dispose();
       featuresCtrl.dispose();
       sortOrderCtrl.dispose();
+    }
+  }
+
+  Future<void> _togglePlanActive(SubscriptionPlan plan) async {
+    final action = plan.isActive ? 'Deactivate' : 'Activate';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('$action Package'),
+        content: Text(
+          plan.isActive
+              ? 'Deactivate "${plan.name}"? It will be hidden from users.'
+              : 'Activate "${plan.name}"? It will become visible to users.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: Text(action),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    setState(() => _processing = true);
+    try {
+      await ref.read(subscriptionProvider).togglePlanActive(plan);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+            content: Text(
+                '"${plan.name}" ${plan.isActive ? 'deactivated' : 'activated'}.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _processing = false);
     }
   }
 

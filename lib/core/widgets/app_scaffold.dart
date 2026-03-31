@@ -139,7 +139,7 @@ class _AppScaffoldState extends ConsumerState<AppScaffold> {
       ),
       const SizedBox(width: 8),
       ElevatedButton.icon(
-        onPressed: () => context.go(AppRoutes.sell),
+        onPressed: () => context.go(AppRoutes.pos),
         icon: const Icon(Icons.point_of_sale, size: 14),
         label: const Text('POS', style: TextStyle(fontSize: 12)),
         style: ElevatedButton.styleFrom(
@@ -261,8 +261,14 @@ class _AppScaffoldState extends ConsumerState<AppScaffold> {
                 if (!isSuperAdmin)
                   _NavItem(
                       icon: Icons.sell_outlined,
-                      label: 'Sell',
+                      label: 'Sales',
                       route: AppRoutes.sell,
+                      collapsed: _sidebarCollapsed),
+                if (!isSuperAdmin)
+                  _NavItem(
+                      icon: Icons.point_of_sale_outlined,
+                      label: 'POS',
+                      route: AppRoutes.pos,
                       collapsed: _sidebarCollapsed),
                 if (!isSuperAdmin)
                   _NavItem(
@@ -356,8 +362,12 @@ class _NavItem extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentLocation = GoRouterState.of(context).matchedLocation;
-    final isActive = currentLocation == route ||
-        (route != AppRoutes.dashboard && currentLocation.startsWith(route));
+    final onPosRoute = currentLocation.startsWith(AppRoutes.pos);
+    final isSalesRoute = route == AppRoutes.sell;
+    final isActive = !onPosRoute || !isSalesRoute
+        ? currentLocation == route ||
+            (route != AppRoutes.dashboard && currentLocation.startsWith(route))
+        : false;
 
     return Tooltip(
       message: collapsed ? label : '',

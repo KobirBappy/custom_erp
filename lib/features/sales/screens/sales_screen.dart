@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/router/app_routes.dart';
 import '../../../core/utils/currency_formatter.dart';
 import '../../../core/utils/date_formatter.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -13,7 +15,6 @@ import '../../returns/providers/return_provider.dart';
 import '../models/sale.dart';
 import '../providers/sale_provider.dart';
 import '../utils/sale_chalan_printer.dart';
-import 'pos_screen.dart';
 
 class SalesScreen extends ConsumerWidget {
   const SalesScreen({super.key});
@@ -22,12 +23,11 @@ class SalesScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final sales = ref.watch(salesProvider);
     const sym = AppConstants.defaultCurrencySymbol;
-    final isWide = MediaQuery.of(context).size.width >= 1000;
 
-    final latestFive = [...sales]
+    final sortedSales = [...sales]
       ..sort((a, b) => b.saleDate.compareTo(a.saleDate));
 
-    final recent = latestFive.take(5).toList();
+    final recent = sortedSales.take(5).toList();
 
     return Column(
       children: [
@@ -37,10 +37,16 @@ class SalesScreen extends ConsumerWidget {
           child: Row(
             children: [
               const Text(
-                'Sell & POS',
+                'Sell History',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const Spacer(),
+              OutlinedButton.icon(
+                onPressed: () => context.go(AppRoutes.pos),
+                icon: const Icon(Icons.point_of_sale_outlined, size: 16),
+                label: const Text('Open POS'),
+              ),
+              const SizedBox(width: 8),
               _SummaryChip(
                 label: 'Total Sales',
                 value: CurrencyFormatter.formatSimple(
@@ -64,16 +70,6 @@ class SalesScreen extends ConsumerWidget {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              const Text(
-                'POS',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
-                height: isWide ? 560 : 760,
-                child: const PosScreen(embedded: true),
-              ),
-              const SizedBox(height: 20),
               Row(
                 children: [
                   const Text(
@@ -101,6 +97,31 @@ class SalesScreen extends ConsumerWidget {
                 )
               else
                 ...recent.map((sale) => Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: _SaleTile(sale: sale, symbol: sym),
+                    )),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  const Text(
+                    'All Sales',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${sortedSales.length} records',
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (sortedSales.isEmpty)
+                const SizedBox.shrink()
+              else
+                ...sortedSales.map((sale) => Padding(
                       padding: const EdgeInsets.only(bottom: 8),
                       child: _SaleTile(sale: sale, symbol: sym),
                     )),
